@@ -16,10 +16,9 @@ We use [Terraform](https://www.terraform.io/docs/providers/helm/index.html) for 
 
 By exporting these metrics into Prometheus you can create useful observability tools like a [PostgreSQL Database dashboard Data for Grafana](https://grafana.com/grafana/dashboards/9628). 
 
-The exporter works by establishing a connection to postgres and pulling metrics per-namespace.
-To do that, Prometheus needs to be able to scrape data from a `/metrics` endpoint, which is created by a [Prometheus client library](https://prometheus.io/docs/instrumenting/clientlibs/).
+The exporter works by establishing a connection to postgres and pulling metrics for the database.
 
-Once you have a `/metrics` endpoint you can create a `ServiceMonitor` to connect the Cloud Platform Prometheus to your endpoint and store data for querying.
+The Helm chart config adds a Service Monitor ("serviceMonitor: enabled: true") to connect the Cloud Platform Prometheus to your endpoint and store data for querying.”
 
 ### Assumptions
 To keep this document short we will assume you already have an postgresql rds database up and running in a namespace on the Cloud Platform (created using Terraform), if not, please refer to [Create an RDS instance](https://user-guide.cloud-platform.service.justice.gov.uk/documentation/deploying-an-app/multicontainer-app-deploy.html#running-in-the-kubernetes-cluster).
@@ -152,5 +151,3 @@ spec:
   policyTypes:
   - Ingress
 ```
-
-
