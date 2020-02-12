@@ -1,0 +1,156 @@
+---
+title: Getting postgres rds instance metrics into Prometheus to create a grafana dashboard
+last_reviewed_on: 2019-12-09
+review_in: 3 months
+---
+
+# <%= current_page.data.title %>
+
+
+### Overview
+This guide will walk you through the steps to export metrics from your postgresql rds database into the [Cloud Platform Prometheus](https://prometheus.cloud-platform.service.justice.gov.uk/) utilising a [prometheus-postgres-exporter helm chart](https://github.com/helm/charts/tree/master/stable/prometheus-postgres-exporter). 
+
+The chart bootstraps a [postgres_exporter](https://github.com/wrouesnel/postgres_exporter) deployment on a Kubernetes cluster using the [Helm](https://helm.sh/docs/topics/charts/) package manager. 
+
+We use [Terraform](https://www.terraform.io/docs/providers/helm/index.html) for the building, changing, and versioning infrastructure of the Helm chart
+
+By exporting these metrics into Prometheus you can create useful observability tools like a [PostgreSQL Database dashboard Data for Grafana](https://grafana.com/grafana/dashboards/9628). 
+
+The exporter works by establishing a connection to postgres and pulling metrics per-namespace.
+To do that, Prometheus needs to be able to scrape data from a `/metrics` endpoint, which is created by a [Prometheus client library](https://prometheus.io/docs/instrumenting/clientlibs/).
+
+Once you have a `/metrics` endpoint you can create a `ServiceMonitor` to connect the Cloud Platform Prometheus to your endpoint and store data for querying.
+
+### Assumptions
+To keep this document short we will assume you already have an postgresql rds database up and running in a namespace on the Cloud Platform (created using Terraform), if not, please refer to [Create an RDS instance](https://user-guide.cloud-platform.service.justice.gov.uk/documentation/deploying-an-app/multicontainer-app-deploy.html#running-in-the-kubernetes-cluster).
+
+
+It is assumed that you have already an rds.tf (rds config) file within: 
+
+```
+cloud-platform-environments/namespaces/live-1.cloud-platform.service.justice.gov.uk/<your namespace>/resources/
+```
+Your config in this file should already look similar to:
+
+```
+module "rds-instance" {
+	  source = "github.com/ministryofjustice/cloud-platform-terraform-rds-instance?ref=5.0"
+	 
+	  cluster_name         = var.cluster_name
+	  cluster_state_bucket = var.cluster_state_bucket
+	 
+	  application            = var.application
+	  environment-name       = var.environment-name
+	  is-production          = var.is-production
+	  infrastructure-support = var.infrastructure-support
+	  team_name              = var.team_name
+	  force_ssl              = true
+	 
+	  providers = {
+	    aws = aws.london
+	  }
+	}
+	 
+	resource "kubernetes_secret" "rds-instance" {
+	  metadata {
+	    name      = var.databasename
+	    namespace = var.namespace
+	  }
+	 
+	  data = {
+	    # postgres://USER:PASSWORD@HOST:PORT/NAME
+	    url = "postgres://${module.rds.database_username}:${module.rds.database_password}@${module.rds_instance_endpoint}/${module.rds.database_name}"
+	  }
+	}
+```
+
+### Steps to exporting the metrics into Prometheus: 
+
+* Edit the above rds.tf file as follows:
+
+  * Add the following config (the datasource will use the "instance_address", "database_username", "database_password" and "database_name" previously stored in your "kubernetes_secret" config):
+
+```
+provider "helm" {
+  namespace = "my-namespace"
+}
+
+resource "helm_release" "postgres_exporter" {
+  name = "postgres-exporter"
+
+  chart     = "stable/prometheus-postgres-exporter"
+  namespace = "my-namespace"
+
+  values = [<<EOF
+config:
+  datasource:
+    host: ${module.rds.rds_instance_address}
+    user: ${module.rds.database_username}
+    password: ${module.rds.database_password}
+    database: ${module.rds.database_name}
+    sslmode: disable
+rbac:
+  pspEnabled: false
+serviceMonitor:
+  enabled: true
+securityContext:
+  runAsUser: 65534
+EOF
+  ]
+
+  lifecycle {
+    ignore_changes = ["keyring"]
+  }
+}
+```
+> **_NOTE:_**
+regarding customising your queries. 
+> **** 
+The "prometheus-postgres-exporter 
+chart" has a [values.yaml file](https://github.com/helm/charts/blob/master/stable/prometheus-postgres-exporter/values.yaml).
+> ****
+Any of these default values can be overidden in the "config: 
+datasource:" section of the rds.tf file above. 
+> ****
+Within that values file there are a number of default queries that 
+the exporter will run (extracted from: [https://github.com/wrouesnel/postgres_exporter/blob/master/queries.yaml](https://github.com/wrouesnel/postgres_exporter/blob/master/queries.yaml)). 
+> ****
+You can customise your queries here within the "config: datasource:". 
+
+*************
+
+* Edit the above main.tf file (in same directory) as follows:
+
+  * Adding the following - to pin the version of the helm chart (to be updated as and when latesy helm  version updated):
+
+```
+provider "helm" {
+  version = "0.10.4"
+  kubernetes {
+  }
+}
+```
+* Edit the above "04-networkpolicy.yaml" file (to allow prometheus scraping of the data) as follows:
+
+  * Add the following in:
+(cloud-platform-environments/namespaces/live-1.cloud-platform.service.justice.gov.uk/<your namespace>/04-networkpolicy.yaml)
+
+```
+---
+apiVersion: extensions/v1beta1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scraping
+  namespace: <your namespace>
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          component: monitoring
+  podSelector: {}
+  policyTypes:
+  - Ingress
+```
+
+
