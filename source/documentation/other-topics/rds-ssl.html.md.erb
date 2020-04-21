@@ -35,7 +35,7 @@ certificate.
 
 In order to establish a connection with `sslmode=verify-full`, which offers [MITM][mitm] protection, we have to provide
 the client with the root CA certificate before it is able to verify the chain of trust. AWS offers [detailed instructions][aws-rds-ssl]
-on how to exactly that.
+on how to do that.
 
 As you can see below, unless provided with the root CA certificate, the client cannot fully verify the endpoint:
 
